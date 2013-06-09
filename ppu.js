@@ -10,16 +10,78 @@
 		this.cycle = 0;
 		this.scanline = 241;
 		this.cycleCount = 0;
+		this.frameCount = 0;
 	}
 
 	ppu.step = function() {
+		if (this.scanline == 240) {
+			if (this.cycle == 1) {
+				if (!this.suppressVbl) {
+					this.setStatus(StatusVblankStarted);
+					this.cycleCount = 0;
+				}
+
+				if (this.NmiOnVBlank == 0x1 && !this.suppressNmi) {
+					cpu.requestInterrupt(InterruptNmi);
+				}
+
+				this.raster();
+			}
+		}
+
+		else if (this.scanline == 260) {
+			if (this.cycle == 1) {
+				this.clearStatus(StatusVblankStarted);
+				this.cycleCount = 0;
+			} else if (this.cycle == 341) {
+				this.scanline = -1;
+				this.cycle = 1;
+				this.frameCount++;
+				return
+			}
+		}
+
+		else if (this.scanline < 240 && this.scanline > -1) {
+			if (this.cycle == 254) {
+				if (this.showBackground)
+					this.renderTileRow();
+
+				if (this.showSprites) {
+					this.evaluateScanlineSprites(this.scanline);
+				}
+			} else if (this.cycle == 256) {
+				if (this.showBackground)
+					this.updateEndScanlineRegisters();
+
+			} else if (this.cycle == 260) {
+				if (this.spritePatternAddress == 0x1 && this.backgroundPatternAddress == 0x0) {
+					// Huho
+					throw new Error('Not implemented');
+				}
+			}
+		}
+
+		else if (this.scanline == -1) {
+			if (this.cycle == 1) {
+				this.clearStatus(StatusSprite0Hit);
+				this.clearStatus(StatusSpriteOverflow);
+
+			} else if (this.cycle == 304) {
+				if (this.showBackground || this.showSprites)
+					this.vramAddress = this.vramLatch;
+			}
+		}
+
+		this.cycle++;
+		this.cycleCount++;
+
 		if (this.cycle == 341) {
 			this.cycle = 0;
 			this.scanline++;
 		}
 
-		this.cycle++;
-		this.cycleCount++;
+		if (this.scanline == 261)
+			this.scanline = -1;
 	}
 
 	ppu.registerRead = function(address) {
@@ -49,9 +111,10 @@
 
 	ppu.readStatus = function() {
 		this.writeLatch = true;
+		var s = memory.raw[0x2002];
 
 		if (this.cycle == 1 && this.scanline == 240) {
-			memory.raw[0x2002] &= 0x7f;
+			s &= 0x7f;
 			this.suppressNmi = true;
 			this.suppressVbl = true;
 		} else {
@@ -59,18 +122,23 @@
 			this.suppressVbl = false;
 			this.clearStatus(StatusVblankStarted);
 		}
+
+		return s;
 	}
 
 	ppu.clearStatus = function(s) {
+		var current = memory.raw[0x2002];
+
 		switch (s) {
 		case StatusSpriteOverflow:
-			memory.raw[0x2002] &= 0xdf;
+			current &= 0xdf;
 		case StatusSprite0Hit:
-			memory.raw[0x2002] &= 0xbf;
+			current &= 0xbf;
 		case StatusVblankStarted:
-			memory.raw[0x2002] &= 0x7f;
+			current &= 0x7f;
 		}
 
+		memory.write(current, 0x2002);
 	}
 
 	global.ppu = ppu;

@@ -14,17 +14,24 @@
 		cpu.pc = 0xc000;
 		cpu.p = 0x24;
 
-		while (true) {
-			logTrace.checkState(cpu, ppu);
+		try {
+			while (true) {
+				logTrace.checkState(cpu, ppu);
 
-			var cycles = cpu.step();
-			logTrace.step();
+				var cycles = cpu.step();
 
-			// 3 PPU cycles for each CPU cycle
-			for (var i = 0; i < 3 * cycles; ++i) {
-				ppu.step();
+				// 3 PPU cycles for each CPU cycle
+				for (var i = 0; i < 3 * cycles; ++i) {
+					ppu.step();
+				}
+
+				logTrace.step();
 			}
+		} catch (ex) {
+			console.error(ex);
 		}
+
+		console.info(logTrace.passed + '/' + logTrace.total, 'lines sucessfully emulated');
 
 	}
 
@@ -34,17 +41,35 @@
 		var lines = logText.split('\n');
 		var linesIdx = 0;
 
-		logTrace.checkState = function(cpu, ppu) {
-			var state = parseLine(lines[linesIdx]);
+		logTrace.passed = 0;
+		logTrace.total = 0;
 
-			assertEquals(state.programCounter, cpu.pc, 'Program Counter');
-			assertEquals(state.a, cpu.a, 'register A');
-			assertEquals(state.x, cpu.x, 'register X');
-			assertEquals(state.y, cpu.y, 'register Y');
-			assertEquals(state.p, cpu.p, 'status P');
-			assertEquals(state.sp, cpu.sp, 'Stack Pointer');
-			assertEquals(state.cyc, ppu.cycle, 'Cycles');
-			assertEquals(state.sl, ppu.scanline, 'Scanline');
+		logTrace.checkState = function(cpu, ppu) {
+			var line = lines[linesIdx];
+			var state = parseLine(line);
+
+			console.log(line);
+
+			[
+				[state.programCounter, cpu.pc, 'Program Counter'],
+				[state.a, cpu.a, 'register A'],
+				[state.x, cpu.x, 'register X'],
+				[state.y, cpu.y, 'register Y'],
+				[state.p, cpu.p, 'status P'],
+				[state.sp, cpu.sp, 'Stack Pointer'],
+				[state.cyc, ppu.cycle, 'Cycles'],
+				[state.sl, ppu.scanline, 'Scanline'],
+			]
+				.forEach(function(args) {
+					try {
+						var result = assertEquals.apply(null, args);
+						if (result)
+							logTrace.passed++;
+					} catch (ex) {
+						console.error(ex);
+					}
+					logTrace.total++;
+				});
 		};
 
 		logTrace.step = function() {
@@ -77,12 +102,12 @@
 	}
 
 	function assertEquals(expected, actual, field) {
-		assert(expected === actual, 'Failed assertion on ' + field
-				 + ': '
-				 + expected + ' ($' + expected.toString(16) + ')'
-				 + ' === '
-				 + actual + ' ($' + actual.toString(16) + ')'
-				);
+		return assert(expected === actual, 'Failed assertion on ' + field
+						  + ': '
+						  + expected + ' ($' + expected.toString(16) + ')'
+						  + ' === '
+						  + actual + ' ($' + actual.toString(16) + ')'
+						 );
 	}
 
 	function loadLogTrace(callback) {

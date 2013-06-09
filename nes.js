@@ -3,10 +3,14 @@
 	"use strict";
 
 	document.addEventListener('DOMContentLoaded', function() {
-		loadLogTrace(function(logTrace) {
-			loadNESFile(function(nesRom) {
-				testCpu(nesRom, logTrace);
-			});
+		// loadLogTrace(function(logTrace) {
+		// 	loadNESFile(function(nesRom) {
+		// 		testCpu(nesRom, logTrace);
+		// 	});
+		// });
+
+		loadNESFile(function(nesRom) {
+			startEmulation(nesRom);
 		});
 	});
 
