@@ -2,18 +2,6 @@
 
 	"use strict";
 
-	document.addEventListener('DOMContentLoaded', function() {
-		// loadLogTrace(function(logTrace) {
-		// 	loadNESFile(function(nesRom) {
-		// 		testCpu(nesRom, logTrace);
-		// 	});
-		// });
-
-		loadNESFile(function(nesRom) {
-			startEmulation(nesRom);
-		});
-	});
-
 	function startEmulation(nesRom) {
 		var cpu = global.cpu;
 		cpu.memory = global.memory;
@@ -36,14 +24,7 @@
 		}
 	}
 
-	function loadNESFile(callback) {
-		var rom = document.querySelector('rom');
-		fetch(rom.getAttribute('src'), function(arrayBuffer) {
-			callback(decodeNES(arrayBuffer));
-		})
-	}
-
-	function fetch(url, callback) {
+	function fetchBinary(url, callback) {
 		var xhr = new XMLHttpRequest();
 		xhr.open('GET', url, true);
 		xhr.responseType = "arraybuffer";
@@ -59,4 +40,7 @@
 		xhr.send(null);
 	}
 
-}(this))
+	global.startEmulation = startEmulation;
+	global.fetchBinary = fetchBinary;
+
+}(module.exports || this))

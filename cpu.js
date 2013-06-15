@@ -87,6 +87,14 @@
 			this.overflow.clear();
 	};
 
+	cpu.testAndSetCarry = function(result) {
+		if (result == 0x1)
+			this.carry.set();
+		else
+			this.carry.clear();
+	};
+
+
 	cpu.testAndSetCarryAddition = function(result) {
 		if (result > 0xff)
 			this.carry.set();
@@ -101,16 +109,26 @@
 			this.carry.clear();
 	};
 
+	cpu.init = function() {
+		this.memory = require('./memory').memory;
+		this.memory.init();
+	};
+
 	cpu.step = function() {
 		this.cycleCount = 0;
-		var opcode = memory.read(this.pc);
+		var opcode = this.memory.read(this.pc);
 		++this.pc;
 
-		if (this.opcodes[opcode] == null) {
-			throw new Error("Unknown opcode " + opcode.toString(16));
+		if (this.opcodes.extra[opcode]) {
+			this.pc += this.opcodes.extra[opcode];
+			console.log("Skipping extra opcode", opcode.toString(16));
 		}
+
+		else if (this.opcodes[opcode] == null) {
+			console.log("Unknown opcode " + opcode.toString(16));
+		}
+
 		else {
-			console.log(opcode.toString(16));
 			this.opcodes[opcode].call(this);
 		}
 
@@ -124,33 +142,33 @@
 		this.p = 0x34;
 		this.sp = 0xfd;
 
-		this.pch = memory.read(0xfffd);
-		this.pcl = memory.read(0xfffc);
+		this.pch = this.memory.read(0xfffd);
+		this.pcl = this.memory.read(0xfffc);
 	};
 
 	cpu.and = function(location) {
-		var value = memory.read(location);
+		var value = this.memory.read(location);
 		this.a &= value;
 		this.testAndSetZero(this.a);
 		this.testAndSetNegative(this.a);
 	};
 
 	cpu.or = function(location) {
-		var value = memory.read(location);
+		var value = this.memory.read(location);
 		this.a |= value;
 		this.testAndSetZero(this.a);
 		this.testAndSetNegative(this.a);
 	};
 
 	cpu.eor = function(location) {
-		var value = memory.read(location);
+		var value = this.memory.read(location);
 		this.a ^= value;
 		this.testAndSetZero(this.a);
 		this.testAndSetNegative(this.a);
 	};
 
 	cpu.cmp = function(location, register) {
-		var value = memory.read(location);
+		var value = this.memory.read(location);
 		var result = this[register] - value;
 		this.testAndSetZero(result);
 		this.testAndSetCarrySubstraction(result);
@@ -170,16 +188,39 @@
 		this[register]++;
 		this.testAndSetZero(this[register]);
 		this.testAndSetNegative(this[register]);
-	}
+	};
+
+	cpu.incm = function(location) {
+		var result = this.memory.read(location);
+
+		result = (result + 1) & 0xff;
+
+		this.testAndSetZero(result);
+		this.testAndSetNegative(result);
+
+		this.memory.write(location, result);
+	};
 
 	cpu.dec = function(register) {
 		this[register]--;
+
 		this.testAndSetZero(this[register]);
 		this.testAndSetNegative(this[register]);
-	}
+	};
+
+	cpu.decm = function(location) {
+		var result = this.memory.read(location);
+
+		result = (result - 1) & 0xff;
+
+		this.testAndSetZero(result);
+		this.testAndSetNegative(result);
+
+		this.memory.write(location, result);
+	};
 
 	cpu.add = function(location) {
-		var value = memory.read(location);
+		var value = this.memory.read(location);
 		var previous = this.a;
 		var result = this.a + value + this.carry.get();
 		this.a = result;
@@ -190,7 +231,7 @@
 	};
 
 	cpu.sub = function(location) {
-		var value = memory.read(location);
+		var value = this.memory.read(location);
 		var previous = this.a;
 		var result = this.a - value - (1 - this.carry.get());
 		this.a = result;
@@ -198,6 +239,98 @@
 		this.testAndSetNegative(this.a);
 		this.testAndSetOverflowSubstraction(previous, value, this.a);
 		this.testAndSetCarrySubstraction(result);
+	};
+
+	cpu.asla = function() {
+		var b = (this.a & 0x80) >> 7;
+		this.a <<= 1;
+
+		this.testAndSetCarry(b);
+		this.testAndSetZero(this.a);
+		this.testAndSetNegative(this.a);
+	};
+
+	cpu.aslm = function(location) {
+		var result = this.memory.read(location);
+
+		var b = (result & 0x80) >> 7;
+		result = (result << 1) & 0xff;
+
+		this.testAndSetCarry(b);
+		this.testAndSetZero(result);
+		this.testAndSetNegative(result);
+
+		this.memory.write(location, result);
+	};
+
+	cpu.lsra = function() {
+		var b = this.a & 0x1;
+		this.a >>= 1;
+
+		this.testAndSetCarry(b);
+		this.testAndSetZero(this.a);
+		this.testAndSetNegative(this.a);
+	};
+
+	cpu.lsrm = function(location) {
+		var result = this.memory.read(location);
+
+		var b = result & 0x1;
+		result >>= 1;
+
+		this.testAndSetCarry(b);
+		this.testAndSetZero(result);
+		this.testAndSetNegative(result);
+
+		this.memory.write(location, result);
+	};
+
+	cpu.rola = function() {
+		var b = (this.a & 0x80) >> 7;
+		this.a <<= 1;
+		this.a |= this.carry.get();
+
+		this.testAndSetCarry(b);
+		this.testAndSetZero(this.a);
+		this.testAndSetNegative(this.a);
+	};
+
+	cpu.rolm = function(location) {
+		var result = this.memory.read(location);
+
+		var b = (this.a & 0x80) >> 7;
+		result = (result << 1) & 0xff;
+		result |= this.carry.get();
+
+		this.testAndSetCarry(b);
+		this.testAndSetZero(result);
+		this.testAndSetNegative(result);
+
+		this.memory.write(location, result);
+	};
+
+	cpu.rora = function() {
+		var b = this.a & 0x1;
+		this.a >>= 1;
+		this.a |= this.carry.get() << 7;
+
+		this.testAndSetCarry(b);
+		this.testAndSetZero(this.a);
+		this.testAndSetNegative(this.a);
+	};
+
+	cpu.rorm = function(location) {
+		var result = this.memory.read(location);
+
+		var b = result & 0x1;
+		result >>= 1;
+		result |= this.carry.get() << 7;
+
+		this.testAndSetCarry(b);
+		this.testAndSetZero(result);
+		this.testAndSetNegative(result);
+
+		this.memory.write(location, result);
 	};
 
 	cpu.jmp = function(location) {
@@ -249,13 +382,13 @@
 	};
 
 	cpu.pushToStack = function(value) {
-		memory.write(0x100 + this.sp, value);
+		this.memory.write(0x100 + this.sp, value);
 		this.sp--;
 	};
 
 	cpu.pullFromStack = function() {
 		this.sp++;
-		return memory.read(0x100 + this.sp);
+		return this.memory.read(0x100 + this.sp);
 	}
 
 	cpu.setBranchCycleCount = function(a) {
@@ -267,24 +400,104 @@
 	};
 
 	cpu.immediateAddress = function() {
-		this.pc++;
-		return this.pc - 1;
+		return this.pc++;
 	};
 
 	cpu.absoluteAddress = function() {
-		var high = memory.read(this.pc + 1);
-		var low = memory.read(this.pc);
+		var high = this.memory.read(this.pc + 1);
+		var low = this.memory.read(this.pc);
 		this.pc += 2;
 		return (high << 8) | low;
 	};
 
+	cpu.absoluteXAddress = function() {
+		//FIXME: Account for additional cycle if crossing page
+
+		var high = this.memory.read(this.pc + 1);
+		var low = this.memory.read(this.pc);
+		this.pc += 2;
+
+		var a = (high << 8) | low;
+		a = (a + this.x) & 0xffff;
+
+		return a;
+	};
+
+	cpu.absoluteYAddress = function() {
+		//FIXME: Account for additional cycle if crossing page
+
+		var high = this.memory.read(this.pc + 1);
+		var low = this.memory.read(this.pc);
+		this.pc += 2;
+
+		var a = (high << 8) | low;
+		a = (a + this.y) & 0xffff;
+
+		return a;
+	};
+
+	cpu.indirectAddress = function() {
+		var high = this.memory.read(this.pc + 1);
+		var low = this.memory.read(this.pc);
+		this.pc += 2;
+
+		var a = (high << 8) | low;
+
+		// The original 6502 does not cross page boundary when fetching
+		// the new address.
+		var a1 = (high << 8) | ((low + 1) & 0xff);
+
+		high = this.memory.read(a1);
+		low = this.memory.read(a);
+
+		a = (high << 8) | low;
+
+		return a;
+	};
+
+	cpu.indirectXAddress = function() {
+		var a = this.memory.read(this.pc++);
+		a = (a + this.x) & 0xff;
+
+		var high = this.memory.read((a + 1) & 0xff);
+		var low = this.memory.read(a);
+
+		return (high << 8) | low;
+	};
+
+	cpu.indirectYAddress = function() {
+		//FIXME: Account for additional cycle if crossing page
+
+		var a = this.memory.read(this.pc++);
+
+		var high = this.memory.read((a + 1) & 0xff);
+		var low = this.memory.read(a);
+
+		a = (high << 8) | low;
+
+		a = (a + this.y) & 0xffff;
+
+		return a;
+	};
+
 	cpu.zeroPageAddress = function() {
+		return this.memory.read(this.pc++);
+	};
+
+	cpu.zeroPageXAddress = function() {
+		var a = (this.memory.read(this.pc) + this.x) & 0xff;
 		this.pc++;
-		return memory.read(this.pc - 1);
+		return a;
+	};
+
+	cpu.zeroPageYAddress = function() {
+		var a = (this.memory.read(this.pc) + this.y) & 0xff;
+		this.pc++;
+		return a;
 	};
 
 	cpu.relativeAddress = function() {
-		var a = memory.read(this.pc);
+		var a = this.memory.read(this.pc);
 		if (a < 0x80)
 			a = a + this.pc;
 		else
@@ -296,7 +509,7 @@
 	};
 
 	cpu.bit = function(location) {
-		var value = memory.read(location);
+		var value = this.memory.read(location);
 		var result = this.a & value;
 		this.testAndSetZero(result);
 		this.testAndSetNegative(value);
@@ -304,13 +517,13 @@
 	}
 
 	cpu.load = function(location, register) {
-		this[register] = memory.read(location);
+		this[register] = this.memory.read(location);
 		this.testAndSetNegative(this[register]);
 		this.testAndSetZero(this[register]);
 	};
 
 	cpu.store = function(location, register) {
-		memory.write(location, this[register]);
+		this.memory.write(location, this[register]);
 	};
 
 	cpu.opcodes = {
@@ -385,6 +598,27 @@
 		// ~~~~~~~~~~
 		// Arithmetic
 
+		// INC
+		0xe6: function() {
+			this.cycleCount = 5;
+			this.incm(this.zeroPageAddress());
+		},
+
+		0xf6: function() {
+			this.cycleCount = 6;
+			this.incm(this.zeroPageXAddress());
+		},
+
+		0xee: function() {
+			this.cycleCount = 6;
+			this.incm(this.absoluteAddress());
+		},
+
+		0xfe: function() {
+			this.cycleCount = 7;
+			this.incm(this.absoluteXAddress());
+		},
+
 		// INX
 		0xe8: function() {
 			this.cycleCount = 2;
@@ -395,6 +629,27 @@
 		0xc8: function() {
 			this.cycleCount = 2;
 			this.inc('y');
+		},
+
+		// DEC
+		0xc6: function() {
+			this.cycleCount = 5;
+			this.decm(this.zeroPageAddress());
+		},
+
+		0xd6: function() {
+			this.cycleCount = 6;
+			this.decm(this.zeroPageXAddress());
+		},
+
+		0xce: function() {
+			this.cycleCount = 6;
+			this.decm(this.absoluteAddress());
+		},
+
+		0xde: function() {
+			this.cycleCount = 7;
+			this.decm(this.absoluteXAddress());
 		},
 
 		// DEX
@@ -415,10 +670,184 @@
 			this.add(this.immediateAddress());
 		},
 
+		0x65: function() {
+			this.cycleCount = 3;
+			this.add(this.zeroPageAddress());
+		},
+
+		0x75: function() {
+			this.cycleCount = 4;
+			this.add(this.zeroPageXAddress());
+		},
+
+		0x6d: function() {
+			this.cycleCount = 4;
+			this.add(this.absoluteAddress());
+		},
+
+		0x7d: function() {
+			this.cycleCount = 4;
+			this.add(this.absoluteXAddress());
+		},
+
+		0x79: function() {
+			this.cycleCount = 4;
+			this.add(this.absoluteYAddress());
+		},
+
+		0x61: function() {
+			this.cycleCount = 6;
+			this.add(this.indirectXAddress());
+		},
+
+		0x71: function() {
+			this.cycleCount = 5;
+			this.add(this.indirectYAddress());
+		},
+
 		// SBC
 		0xe9: function() {
 			this.cycleCount = 2;
 			this.sub(this.immediateAddress());
+		},
+
+		0xe5: function() {
+			this.cycleCount = 3;
+			this.sub(this.zeroPageAddress());
+		},
+
+		0xf5: function() {
+			this.cycleCount = 4;
+			this.sub(this.zeroPageXAddress());
+		},
+
+		0xed: function() {
+			this.cycleCount = 4;
+			this.sub(this.absoluteAddress());
+		},
+
+		0xfd: function() {
+			this.cycleCount = 4;
+			this.sub(this.absoluteXAddress());
+		},
+
+		0xf9: function() {
+			this.cycleCount = 4;
+			this.sub(this.absoluteYAddress());
+		},
+
+		0xe1: function() {
+			this.cycleCount = 6;
+			this.sub(this.indirectXAddress());
+		},
+
+		0xf1: function() {
+			this.cycleCount = 5;
+			this.sub(this.indirectYAddress());
+		},
+
+		// LSR
+		0x4a: function() {
+			this.cycleCount = 2;
+			this.lsra();
+		},
+
+		0x46: function() {
+			this.cycleCount = 5;
+			this.lsrm(this.zeroPageAddress());
+		},
+
+		0x56: function() {
+			this.cycleCount = 6;
+			this.lsrm(this.zeroPageXAddress());
+		},
+
+		0x4e: function() {
+			this.cycleCount = 6;
+			this.lsrm(this.absoluteAddress());
+		},
+
+		0x5e: function() {
+			this.cycleCount = 7;
+			this.lsrm(this.absoluteXAddress());
+		},
+
+		// ASL
+		0x0a: function() {
+			this.cycleCount = 2;
+			this.asla();
+		},
+
+		0x06: function() {
+			this.cycleCount = 5;
+			this.aslm(this.zeroPageAddress());
+		},
+
+		0x16: function() {
+			this.cycleCount = 6;
+			this.aslm(this.zeroPageXAddress());
+		},
+
+		0x0e: function() {
+			this.cycleCount = 6;
+			this.aslm(this.absoluteAddress());
+		},
+
+		0x1e: function() {
+			this.cycleCount = 7;
+			this.aslm(this.absoluteXAddress());
+		},
+
+		// ROL
+		0x2a: function() {
+			this.cycleCount = 2;
+			this.rola();
+		},
+
+		0x26: function() {
+			this.cycleCount = 5;
+			this.rolm(this.zeroPageAddress());
+		},
+
+		0x36: function() {
+			this.cycleCount = 6;
+			this.rolm(this.zeroPageXAddress());
+		},
+
+		0x2e: function() {
+			this.cycleCount = 6;
+			this.rolm(this.absoluteAddress());
+		},
+
+		0x3e: function() {
+			this.cycleCount = 7;
+			this.rolm(this.absoluteXAddress());
+		},
+
+		// ROR
+		0x6a: function() {
+			this.cycleCount = 2;
+			this.rora();
+		},
+
+		0x66: function() {
+			this.cycleCount = 5;
+			this.rorm(this.zeroPageAddress());
+		},
+
+		0x76: function() {
+			this.cycleCount = 6;
+			this.rorm(this.zeroPageXAddress());
+		},
+
+		0x6e: function() {
+			this.cycleCount = 6;
+			this.rorm(this.absoluteAddress());
+		},
+
+		0x7e: function() {
+			this.cycleCount = 7;
+			this.rorm(this.absoluteXAddress());
 		},
 
 		// ~~~~~~~~~~
@@ -430,10 +859,50 @@
 			this.bit(this.zeroPageAddress());
 		},
 
+		0x2c: function() {
+			this.cycleCount = 4;
+			this.bit(this.absoluteAddress());
+		},
+
 		// AND
 		0x29: function() {
 			this.cycleCount = 2;
 			this.and(this.immediateAddress());
+		},
+
+		0x25: function() {
+			this.cycleCount = 3;
+			this.and(this.zeroPageAddress());
+		},
+
+		0x35: function() {
+			this.cycleCount = 4;
+			this.and(this.zeroPageXAddress());
+		},
+
+		0x2d: function() {
+			this.cycleCount = 4;
+			this.and(this.absoluteAddress());
+		},
+
+		0x3d: function() {
+			this.cycleCount = 4;
+			this.and(this.absoluteXAddress());
+		},
+
+		0x39: function() {
+			this.cycleCount = 4;
+			this.and(this.absoluteYAddress());
+		},
+
+		0x21: function() {
+			this.cycleCount = 6;
+			this.and(this.indirectXAddress());
+		},
+
+		0x31: function() {
+			this.cycleCount = 5;
+			this.and(this.indirectYAddress());
 		},
 
 		// ORA
@@ -442,10 +911,80 @@
 			this.or(this.immediateAddress());
 		},
 
+		0x05: function() {
+			this.cycleCount = 3;
+			this.or(this.zeroPageAddress());
+		},
+
+		0x15: function() {
+			this.cycleCount = 4;
+			this.or(this.zeroPageXAddress());
+		},
+
+		0x0d: function() {
+			this.cycleCount = 4;
+			this.or(this.absoluteAddress());
+		},
+
+		0x1d: function() {
+			this.cycleCount = 4;
+			this.or(this.absoluteXAddress());
+		},
+
+		0x19: function() {
+			this.cycleCount = 4;
+			this.or(this.absoluteYAddress());
+		},
+
+		0x01: function() {
+			this.cycleCount = 6;
+			this.or(this.indirectXAddress());
+		},
+
+		0x11: function() {
+			this.cycleCount = 5;
+			this.or(this.indirectYAddress());
+		},
+
 		// EOR
 		0x49: function() {
 			this.cycleCount = 2;
 			this.eor(this.immediateAddress());
+		},
+
+		0x45: function() {
+			this.cycleCount = 3;
+			this.eor(this.zeroPageAddress());
+		},
+
+		0x55: function() {
+			this.cycleCount = 4;
+			this.eor(this.zeroPageXAddress());
+		},
+
+		0x4d: function() {
+			this.cycleCount = 4;
+			this.eor(this.absoluteAddress());
+		},
+
+		0x5d: function() {
+			this.cycleCount = 4;
+			this.eor(this.absoluteXAddress());
+		},
+
+		0x59: function() {
+			this.cycleCount = 4;
+			this.eor(this.absoluteYAddress());
+		},
+
+		0x41: function() {
+			this.cycleCount = 6;
+			this.eor(this.indirectXAddress());
+		},
+
+		0x51: function() {
+			this.cycleCount = 5;
+			this.eor(this.indirectYAddress());
 		},
 
 		// CMP
@@ -454,16 +993,71 @@
 			this.cmp(this.immediateAddress(), 'a');
 		},
 
+		0xc5: function() {
+			this.cycleCount = 3;
+			this.cmp(this.zeroPageAddress(), 'a');
+		},
+
+		0xd5: function() {
+			this.cycleCount = 4;
+			this.cmp(this.zeroPageXAddress(), 'a');
+		},
+
+		0xcd: function() {
+			this.cycleCount = 4;
+			this.cmp(this.absoluteAddress(), 'a');
+		},
+
+		0xdd: function() {
+			this.cycleCount = 4;
+			this.cmp(this.absoluteXAddress(), 'a');
+		},
+
+		0xd9: function() {
+			this.cycleCount = 4;
+			this.cmp(this.absoluteYAddress(), 'a');
+		},
+
+		0xc1: function() {
+			this.cycleCount = 6;
+			this.cmp(this.indirectXAddress(), 'a');
+		},
+
+		0xd1: function() {
+			this.cycleCount = 5;
+			this.cmp(this.indirectYAddress(), 'a');
+		},
+
 		// CPX
 		0xe0: function() {
 			this.cycleCount = 2;
 			this.cmp(this.immediateAddress(), 'x');
 		},
 
+		0xe4: function() {
+			this.cycleCount = 3;
+			this.cmp(this.zeroPageAddress(), 'x');
+		},
+
+		0xec: function() {
+			this.cycleCount = 4;
+			this.cmp(this.absoluteAddress(), 'x');
+		},
+
 		// CPY
 		0xc0: function() {
 			this.cycleCount = 2;
 			this.cmp(this.immediateAddress(), 'y');
+		},
+
+		0xc4: function() {
+			this.cycleCount = 3;
+			this.cmp(this.zeroPageAddress(), 'y');
+		},
+
+		0xcc: function() {
+			this.cycleCount = 4;
+			this.cmp(this.absoluteAddress(), 'y');
 		},
 
 		// ~~~~~~~~~~
@@ -497,6 +1091,11 @@
 		0x4c: function() {
 			this.cycleCount = 3;
 			this.jmp(this.absoluteAddress());
+		},
+
+		0x6c: function() {
+			this.cycleCount = 5;
+			this.jmp(this.indirectAddress());
 		},
 
 		// BVS
@@ -556,13 +1155,63 @@
 			this.store(this.zeroPageAddress(), 'a');
 		},
 
+		0x95: function() {
+			this.cycleCount = 4;
+			this.store(this.zeroPageXAddress(), 'a');
+		},
+
+		0x8d: function() {
+			this.cycleCount = 4;
+			this.store(this.absoluteAddress(), 'a');
+		},
+
+		0x9d: function() {
+			this.cycleCount = 5;
+			this.store(this.absoluteXAddress(), 'a');
+		},
+
+		0x99: function() {
+			this.cycleCount = 5;
+			this.store(this.absoluteYAddress(), 'a');
+		},
+
+		0x81: function() {
+			this.cycleCount = 6;
+			this.store(this.indirectXAddress(), 'a');
+		},
+
+		0x91: function() {
+			this.cycleCount = 5;
+			this.store(this.indirectYAddress(), 'a');
+		},
+
+		// STY
+		0x84: function() {
+			this.cycleCount = 3;
+			this.store(this.zeroPageAddress(), 'y');
+		},
+
+		0x94: function() {
+			this.cycleCount = 4;
+			this.store(this.zeroPageXAddress(), 'y');
+		},
+
+		0x8c: function() {
+			this.cycleCount = 4;
+			this.store(this.absoluteAddress(), 'y');
+		},
+
 		// STX
 		0x86: function() {
 			this.cycleCount = 3;
 			this.store(this.zeroPageAddress(), 'x');
 		},
 
-		// STX
+		0x96: function() {
+			this.cycleCount = 4;
+			this.store(this.zeroPageYAddress(), 'x');
+		},
+
 		0x8e: function() {
 			this.cycleCount = 4;
 			this.store(this.absoluteAddress(), 'x');
@@ -577,10 +1226,24 @@
 			this.load(this.immediateAddress(), 'x');
 		},
 
-		// LDX
+		0xa6: function() {
+			this.cycleCount = 3;
+			this.load(this.zeroPageAddress(), 'x');
+		},
+
+		0xb6: function() {
+			this.cycleCount = 4;
+			this.load(this.zeroPageYAddress(), 'x');
+		},
+
 		0xae: function() {
 			this.cycleCount = 4;
 			this.load(this.absoluteAddress(), 'x');
+		},
+
+		0xbe: function() {
+			this.cycleCount = 4;
+			this.load(this.absoluteYAddress(), 'x');
 		},
 
 		// LDY
@@ -589,16 +1252,65 @@
 			this.load(this.immediateAddress(), 'y');
 		},
 
+		0xa4: function() {
+			this.cycleCount = 3;
+			this.load(this.zeroPageAddress(), 'y');
+		},
+
+		0xb4: function() {
+			this.cycleCount = 4;
+			this.load(this.zeroPageXAddress(), 'y');
+		},
+
+		0xac: function() {
+			this.cycleCount = 4;
+			this.load(this.absoluteAddress(), 'y');
+		},
+
+		0xbc: function() {
+			this.cycleCount = 4;
+			this.load(this.absoluteXAddress(), 'y');
+		},
+
 		// LDA
 		0xa9: function() {
 			this.cycleCount = 2;
 			this.load(this.immediateAddress(), 'a');
 		},
 
-		// LDA
+		0xa5: function() {
+			this.cycleCount = 3;
+			this.load(this.zeroPageAddress(), 'a');
+		},
+
+		0xb5: function() {
+			this.cycleCount = 4;
+			this.load(this.zeroPageXAddress(), 'a');
+		},
+
 		0xad: function() {
 			this.cycleCount = 4;
 			this.load(this.absoluteAddress(), 'a');
+		},
+
+		0xbd: function() {
+			this.cycleCount = 4;
+			this.load(this.absoluteXAddress(), 'a');
+		},
+
+		0xb9: function() {
+			this.cycleCount = 4;
+			this.load(this.absoluteYAddress(), 'a');
+		},
+
+		0xa1: function() {
+			this.cycleCount = 6;
+			this.load(this.indirectXAddress(), 'a');
+		},
+
+		0xb1: function() {
+			this.cycleCount = 5;
+			this.load(this.indirectYAddress(), 'a');
 		},
 
 		// ~~~~~~~~~~
@@ -643,6 +1355,42 @@
 		// NOP
 		0xea: function() {
 			this.cycleCount = 2;
+		},
+
+		// Extra opcodes, with the number of bytes to skip
+		extra: {
+			// NOP
+			0x1a: 0,
+			0x3a: 0,
+			0x5a: 0,
+			0x7a: 0,
+			0xda: 0,
+			0xfa: 0,
+
+			// SKB
+			0x80: 1,
+			0x82: 1,
+			0xc2: 1,
+			0xe2: 1,
+
+			0x04: 1,
+			0x14: 1,
+			0x34: 1,
+			0x44: 1,
+			0x54: 1,
+			0x64: 1,
+			0x74: 1,
+			0xd4: 1,
+			0xf4: 1,
+
+			// SKW
+			0x0c: 2,
+			0x1c: 2,
+			0x3c: 2,
+			0x5c: 2,
+			0x7c: 2,
+			0xdc: 2,
+			0xfc: 2,
 		},
 	};
 
@@ -713,4 +1461,4 @@
 
 	global.cpu = cpu;
 
-}(this))
+}(module.exports || this))

@@ -120,4 +120,4 @@
 
 	global.decodeNES = decodeNES;
 
-}(this))
+}(module.exports || this))

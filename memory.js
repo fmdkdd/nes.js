@@ -5,6 +5,12 @@
 	var memory = {
 		raw: new Uint8Array(0x10000),
 
+		init: function() {
+			for (var i = 0; i < 0x800; ++i) {
+				this.raw[i] = 0xff;
+			}
+		},
+
 		read: function(addr) {
 			// 2KB RAM and mirrors
 			if (addr < 0x2000) {
@@ -24,7 +30,7 @@
 			}
 
 			// Cartridge mapping
-			else if (addr < 0xffff) {
+			else if (addr <= 0xffff) {
 				return this.raw[addr];
 			}
 
@@ -52,7 +58,7 @@
 			}
 
 			// Cartridge mapping
-			else if (addr < 0xffff) {
+			else if (addr <= 0xffff) {
 				return this.raw[addr] = val;
 			}
 
@@ -69,4 +75,4 @@
 
 	global.memory = memory;
 
-}(this))
+}(module.exports || this))

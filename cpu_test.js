@@ -1,10 +1,12 @@
 (function(global) {
 
-	function testCpu(nesRom, logTrace) {
-		var cpu = global.cpu;
-		var ppu = global.ppu;
-		cpu.memory = global.memory;
+	"use strict";
 
+	function testCpu(nesRom, logTrace) {
+		var cpu = require('./cpu').cpu;
+		var ppu = require('./ppu').ppu;
+
+		cpu.init();
 		cpu.memory.loadROM(nesRom);
 
 		cpu.reset();
@@ -57,8 +59,8 @@
 				[state.y, cpu.y, 'register Y'],
 				[state.p, cpu.p, 'status P'],
 				[state.sp, cpu.sp, 'Stack Pointer'],
-				[state.cyc, ppu.cycle, 'Cycles'],
-				[state.sl, ppu.scanline, 'Scanline'],
+				// [state.cyc, ppu.cycle, 'Cycles'],
+				// [state.sl, ppu.scanline, 'Scanline'],
 			]
 				.forEach(function(args) {
 					try {
@@ -103,21 +105,14 @@
 
 	function assertEquals(expected, actual, field) {
 		return assert(expected === actual, 'Failed assertion on ' + field
-						  + ': '
+						  + ': expected '
 						  + expected + ' ($' + expected.toString(16) + ')'
-						  + ' === '
+						  + ' got '
 						  + actual + ' ($' + actual.toString(16) + ')'
 						 );
 	}
 
-	function loadLogTrace(callback) {
-		var log = document.querySelector('log');
-		fetch(log.getAttribute('src'), function(text) {
-			callback(parseLog(text));
-		})
-	}
-
-	function fetch(url, callback) {
+	function fetchText(url, callback) {
 		var xhr = new XMLHttpRequest();
 		xhr.open('GET', url, true);
 		xhr.onreadystatechange = function() {
@@ -133,6 +128,6 @@
 	}
 
 	global.testCpu = testCpu;
-	global.loadLogTrace = loadLogTrace;
+	global.parseLog = parseLog;
 
-}(this))
+}(module.exports || this))
