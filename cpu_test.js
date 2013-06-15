@@ -59,8 +59,8 @@
 				[state.y, cpu.y, 'register Y'],
 				[state.p, cpu.p, 'status P'],
 				[state.sp, cpu.sp, 'Stack Pointer'],
-				// [state.cyc, ppu.cycle, 'Cycles'],
-				// [state.sl, ppu.scanline, 'Scanline'],
+				[state.cyc, ppu.cycle, 'Cycles'],
+				[state.sl, ppu.scanline, 'Scanline'],
 			]
 				.forEach(function(args) {
 					try {

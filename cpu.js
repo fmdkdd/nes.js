@@ -393,10 +393,13 @@
 
 	cpu.setBranchCycleCount = function(a) {
 		// One more cycle if the branch goes to a new page
-		if ((((this.pc - 1) & 0xff00) >> 8) != ((a & 0xff00) >> 8))
+		if (((this.pc - 1) & 0xff00) != (a & 0xff00))
 			this.cycleCount = 4;
 		else
 			this.cycleCount = 3;
+
+		// FIXME: nestest.log says otherwise
+		this.cycleCount = 3;
 	};
 
 	cpu.immediateAddress = function() {
@@ -420,6 +423,9 @@
 		var a = (high << 8) | low;
 		a = (a + this.x) & 0xffff;
 
+		if ((high << 8) != (a & 0xff00))
+			this.cycleCount++;
+
 		return a;
 	};
 
@@ -432,6 +438,9 @@
 
 		var a = (high << 8) | low;
 		a = (a + this.y) & 0xffff;
+
+		if ((high << 8) != (a & 0xff00))
+			this.cycleCount++;
 
 		return a;
 	};
@@ -468,14 +477,17 @@
 	cpu.indirectYAddress = function() {
 		//FIXME: Account for additional cycle if crossing page
 
-		var a = this.memory.read(this.pc++);
+		var aInd = this.memory.read(this.pc++);
 
-		var high = this.memory.read((a + 1) & 0xff);
-		var low = this.memory.read(a);
+		var high = this.memory.read((aInd + 1) & 0xff);
+		var low = this.memory.read(aInd);
 
-		a = (high << 8) | low;
+		var a = (high << 8) | low;
 
 		a = (a + this.y) & 0xffff;
+
+		if ((high << 8) != (a & 0xff00))
+			this.cycleCount++;
 
 		return a;
 	};
@@ -1151,70 +1163,70 @@
 
 		// STA
 		0x85: function() {
-			this.cycleCount = 3;
 			this.store(this.zeroPageAddress(), 'a');
+			this.cycleCount = 3;
 		},
 
 		0x95: function() {
-			this.cycleCount = 4;
 			this.store(this.zeroPageXAddress(), 'a');
+			this.cycleCount = 4;
 		},
 
 		0x8d: function() {
-			this.cycleCount = 4;
 			this.store(this.absoluteAddress(), 'a');
+			this.cycleCount = 4;
 		},
 
 		0x9d: function() {
-			this.cycleCount = 5;
 			this.store(this.absoluteXAddress(), 'a');
+			this.cycleCount = 5;
 		},
 
 		0x99: function() {
-			this.cycleCount = 5;
 			this.store(this.absoluteYAddress(), 'a');
+			this.cycleCount = 5;
 		},
 
 		0x81: function() {
-			this.cycleCount = 6;
 			this.store(this.indirectXAddress(), 'a');
+			this.cycleCount = 6;
 		},
 
 		0x91: function() {
-			this.cycleCount = 5;
 			this.store(this.indirectYAddress(), 'a');
+			this.cycleCount = 6;
 		},
 
 		// STY
 		0x84: function() {
-			this.cycleCount = 3;
 			this.store(this.zeroPageAddress(), 'y');
+			this.cycleCount = 3;
 		},
 
 		0x94: function() {
-			this.cycleCount = 4;
 			this.store(this.zeroPageXAddress(), 'y');
+			this.cycleCount = 4;
 		},
 
 		0x8c: function() {
-			this.cycleCount = 4;
 			this.store(this.absoluteAddress(), 'y');
+			this.cycleCount = 4;
 		},
 
 		// STX
 		0x86: function() {
-			this.cycleCount = 3;
 			this.store(this.zeroPageAddress(), 'x');
+			this.cycleCount = 3;
 		},
 
 		0x96: function() {
-			this.cycleCount = 4;
 			this.store(this.zeroPageYAddress(), 'x');
+			this.cycleCount = 4;
 		},
 
 		0x8e: function() {
-			this.cycleCount = 4;
 			this.store(this.absoluteAddress(), 'x');
+			this.cycleCount = 4;
 		},
 
 		// ~~~~~~~~~~
