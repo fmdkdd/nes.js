@@ -43,57 +43,102 @@
 	// |          or D6 from last BIT
 	// +--------- N: Set to bit 7 of the last operation
 
-	addFlag(cpu, 'carry', 0);
-	addFlag(cpu, 'zero', 1);
-	addFlag(cpu, 'irqDisable', 2);
-	addFlag(cpu, 'decimalMode', 3);
-	addFlag(cpu, 'overflow', 6);
-	addFlag(cpu, 'negative', 7);
+	addFlag(cpu, 'carry', bit(0));
+	addFlag(cpu, 'zero', bit(1));
+	addFlag(cpu, 'irqDisable', bit(2));
+	addFlag(cpu, 'decimalMode', bit(3));
+	addFlag(cpu, 'overflow', bit(6));
+	addFlag(cpu, 'negative', bit(7));
+
+	// Main functions
+
+	cpu.init = function() {
+		this.memory = require('./memory').memory;
+		this.memory.init();
+	};
+
+	cpu.reset = function() {
+		this.a = 0;
+		this.x = 0;
+		this.y = 0;
+		this.p = 0x34;
+		this.sp = 0xfd;
+
+		// Program counter to reset vector
+		this.pch = this.memory.read(0xfffd);
+		this.pcl = this.memory.read(0xfffc);
+	};
+
+	cpu.step = function() {
+		this.cycleCount = 0;
+		var opcode = this.memory.read(this.pc);
+		++this.pc;
+
+		if (this.opcodes.extra[opcode]) {
+			this.pc += this.opcodes.extra[opcode];
+			console.log("Skipping extra opcode", toHex(opcode));
+		}
+
+		else if (this.opcodes[opcode] == null) {
+			console.log("Unknown opcode " + toHex(opcode));
+		}
+
+		else {
+			this.opcodes[opcode].call(this);
+		}
+
+		return this.cycleCount;
+	};
+
+
+
+	function sameSign(a, b) {
+		return !((a ^ b) & bit(7));
+	}
+
+	// Flags utils
 
 	cpu.testAndSetNegative = function(val) {
-		if (val & 0x80)
+		if (val & bit(7))
 			this.negative.set();
 		else
 			this.negative.clear();
 	};
 
 	cpu.testAndSetZero = function(val) {
-		if (val == 0x0)
+		if (val == 0)
 			this.zero.set();
 		else
 			this.zero.clear();
 	};
 
 	cpu.testAndSetOverflow = function(result) {
-		if (result & 0x40)
+		if (result & bit(6))
 			this.overflow.set();
 		else
 			this.overflow.clear();
 	};
 
 	cpu.testAndSetOverflowAddition = function(a, b, r) {
-		if ((((a ^ b) & 0x80) == 0x0) // a and b have the same signs
-			 && (((a ^ r) & 0x80) == 0x80)) // but a and r have different signs
+		if (sameSign(a, b) && !sameSign(a, r))
 			this.overflow.set();
 		else
 			this.overflow.clear();
 	};
 
 	cpu.testAndSetOverflowSubstraction = function(a, b, r) {
-		if ((((a ^ b) & 0x80) != 0x0) // a and b have different signs
-			 && (((a ^ r) & 0x80) != 0x0)) // and a and r have different signs
+		if (!sameSign(a, b) && !(sameSign(a, r)))
 			this.overflow.set();
 		else
 			this.overflow.clear();
 	};
 
 	cpu.testAndSetCarry = function(result) {
-		if (result == 0x1)
+		if (result > 0)
 			this.carry.set();
 		else
 			this.carry.clear();
 	};
-
 
 	cpu.testAndSetCarryAddition = function(result) {
 		if (result > 0xff)
@@ -109,67 +154,145 @@
 			this.carry.clear();
 	};
 
-	cpu.init = function() {
-		this.memory = require('./memory').memory;
-		this.memory.init();
+	// Addressing mode utils
+
+	cpu.immediateAddress = function() {
+		var address = this.pc;
+		this.pc++;
+		return address;
 	};
 
-	cpu.step = function() {
-		this.cycleCount = 0;
-		var opcode = this.memory.read(this.pc);
-		++this.pc;
+	cpu.absoluteAddress = function(offset) {
+		var offset = offset || 0;
 
-		if (this.opcodes.extra[opcode]) {
-			this.pc += this.opcodes.extra[opcode];
-			console.log("Skipping extra opcode", opcode.toString(16));
-		}
+		var low = this.memory.read(this.pc);
+		var high = toHigh(this.memory.read(this.pc + 1));
+		this.pc += 2;
 
-		else if (this.opcodes[opcode] == null) {
-			console.log("Unknown opcode " + opcode.toString(16));
-		}
+		var address = high | low;
 
-		else {
-			this.opcodes[opcode].call(this);
-		}
+		address = toWord(address + offset);
 
-		return this.cycleCount;
+		if (high != highPart(address))
+			this.cycleCount++;
+
+		return address;
 	};
 
-	cpu.reset = function() {
-		this.a = 0;
-		this.x = 0;
-		this.y = 0;
-		this.p = 0x34;
-		this.sp = 0xfd;
-
-		this.pch = this.memory.read(0xfffd);
-		this.pcl = this.memory.read(0xfffc);
+	cpu.absoluteXAddress = function() {
+		return this.absoluteAddress(this.x);
 	};
+
+	cpu.absoluteYAddress = function() {
+		return this.absoluteAddress(this.y);
+	};
+
+	cpu.indirectAddress = function() {
+		var low = this.memory.read(this.pc);
+		var high = toHigh(this.memory.read(this.pc + 1));
+		this.pc += 2;
+
+		var addressLow = high | low;
+
+		// The original 6502 does not cross page boundary when fetching
+		// the new address.
+		var addressHigh = high | (toByte(low + 1));
+
+		low = this.memory.read(addressLow);
+		high = toHigh(this.memory.read(addressHigh));
+
+		var finalAddress = high | low;
+
+		return finalAddress;
+	};
+
+	cpu.indirectXAddress = function() {
+		var indirectAddress = this.memory.read(this.pc++);
+		indirectAddress = toByte(indirectAddress + this.x);
+
+		var low = this.memory.read(indirectAddress);
+		var high = toHigh(this.memory.read(toByte(indirectAddress + 1)));
+
+		var finalAddress = high | low;
+
+		return finalAddress;
+	};
+
+	cpu.indirectYAddress = function() {
+		var indirectAddress = this.memory.read(this.pc++);
+
+		var low = this.memory.read(indirectAddress);
+		var high = toHigh(this.memory.read(toByte(indirectAddress + 1)));
+
+		var finalAddress = toWord((high | low) + this.y);
+
+		if (high != (highPart(finalAddress)))
+			this.cycleCount++;
+
+		return finalAddress;
+	};
+
+	cpu.zeroPageAddress = function(offset) {
+		var offset = offset || 0;
+		var address = toByte(this.memory.read(this.pc) + offset);
+		this.pc++;
+		return address;
+	};
+
+	cpu.zeroPageXAddress = function() {
+		return this.zeroPageAddress(this.x);
+	};
+
+	cpu.zeroPageYAddress = function() {
+		return this.zeroPageAddress(this.y);
+	};
+
+	cpu.relativeAddress = function() {
+		var address = this.memory.read(this.pc);
+		if (address < 0x80)
+			address = this.pc + address;
+		else
+			address = this.pc + (address - 0x100);
+
+		++address;
+
+		return address;
+	};
+
+	// Other instructions utils
 
 	cpu.and = function(location) {
 		var value = this.memory.read(location);
+
 		this.a &= value;
+
 		this.testAndSetZero(this.a);
 		this.testAndSetNegative(this.a);
 	};
 
 	cpu.or = function(location) {
 		var value = this.memory.read(location);
+
 		this.a |= value;
+
 		this.testAndSetZero(this.a);
 		this.testAndSetNegative(this.a);
 	};
 
 	cpu.eor = function(location) {
 		var value = this.memory.read(location);
+
 		this.a ^= value;
+
 		this.testAndSetZero(this.a);
 		this.testAndSetNegative(this.a);
 	};
 
 	cpu.cmp = function(location, register) {
 		var value = this.memory.read(location);
+
 		var result = this[register] - value;
+
 		this.testAndSetZero(result);
 		this.testAndSetCarrySubstraction(result);
 		this.testAndSetNegative(result);
@@ -186,6 +309,7 @@
 
 	cpu.inc = function(register) {
 		this[register]++;
+
 		this.testAndSetZero(this[register]);
 		this.testAndSetNegative(this[register]);
 	};
@@ -193,7 +317,7 @@
 	cpu.incm = function(location) {
 		var result = this.memory.read(location);
 
-		result = (result + 1) & 0xff;
+		result = toByte(result + 1);
 
 		this.testAndSetZero(result);
 		this.testAndSetNegative(result);
@@ -211,7 +335,7 @@
 	cpu.decm = function(location) {
 		var result = this.memory.read(location);
 
-		result = (result - 1) & 0xff;
+		result = toByte(result - 1);
 
 		this.testAndSetZero(result);
 		this.testAndSetNegative(result);
@@ -221,28 +345,38 @@
 
 	cpu.add = function(location) {
 		var value = this.memory.read(location);
+
 		var previous = this.a;
+
+		// Use temporary variable to check for carry
 		var result = this.a + value + this.carry.get();
+		this.testAndSetCarryAddition(result);
+
 		this.a = result;
+
 		this.testAndSetZero(this.a);
 		this.testAndSetNegative(this.a);
 		this.testAndSetOverflowAddition(previous, value, this.a);
-		this.testAndSetCarryAddition(result);
 	};
 
 	cpu.sub = function(location) {
 		var value = this.memory.read(location);
+
 		var previous = this.a;
+
+		// Use temporary variable to check for carry
 		var result = this.a - value - (1 - this.carry.get());
+		this.testAndSetCarrySubstraction(result);
+
 		this.a = result;
+
 		this.testAndSetZero(this.a);
 		this.testAndSetNegative(this.a);
 		this.testAndSetOverflowSubstraction(previous, value, this.a);
-		this.testAndSetCarrySubstraction(result);
 	};
 
 	cpu.asla = function() {
-		var b = (this.a & 0x80) >> 7;
+		var b = this.a & bit(7);
 		this.a <<= 1;
 
 		this.testAndSetCarry(b);
@@ -253,8 +387,8 @@
 	cpu.aslm = function(location) {
 		var result = this.memory.read(location);
 
-		var b = (result & 0x80) >> 7;
-		result = (result << 1) & 0xff;
+		var b = result & bit(7);
+		result = toByte(result << 1);
 
 		this.testAndSetCarry(b);
 		this.testAndSetZero(result);
@@ -264,7 +398,7 @@
 	};
 
 	cpu.lsra = function() {
-		var b = this.a & 0x1;
+		var b = this.a & bit(0);
 		this.a >>= 1;
 
 		this.testAndSetCarry(b);
@@ -275,7 +409,7 @@
 	cpu.lsrm = function(location) {
 		var result = this.memory.read(location);
 
-		var b = result & 0x1;
+		var b = result & bit(0);
 		result >>= 1;
 
 		this.testAndSetCarry(b);
@@ -286,7 +420,7 @@
 	};
 
 	cpu.rola = function() {
-		var b = (this.a & 0x80) >> 7;
+		var b = this.a & bit(7);
 		this.a <<= 1;
 		this.a |= this.carry.get();
 
@@ -298,8 +432,8 @@
 	cpu.rolm = function(location) {
 		var result = this.memory.read(location);
 
-		var b = (this.a & 0x80) >> 7;
-		result = (result << 1) & 0xff;
+		var b = this.a & bit(7);
+		result = toByte(result << 1);
 		result |= this.carry.get();
 
 		this.testAndSetCarry(b);
@@ -310,7 +444,7 @@
 	};
 
 	cpu.rora = function() {
-		var b = this.a & 0x1;
+		var b = this.a & bit(0);
 		this.a >>= 1;
 		this.a |= this.carry.get() << 7;
 
@@ -322,7 +456,7 @@
 	cpu.rorm = function(location) {
 		var result = this.memory.read(location);
 
-		var b = result & 0x1;
+		var b = result & bit(0);
 		result >>= 1;
 		result |= this.carry.get() << 7;
 
@@ -338,7 +472,7 @@
 	};
 
 	cpu.jsr = function(location) {
-		var high = (this.pc - 1) >> 8;
+		var high = toLow(this.pc - 1);
 		var low = this.pc - 1;
 
 		this.pushToStack(high);
@@ -349,7 +483,7 @@
 
 	cpu.plp = function() {
 		// Not sure why we must set bit 4 but not 5
-		this.p = (this.pullFromStack() | 0x30) - 0x10;
+		this.p = (this.pullFromStack() | bit(4) | bit(5)) - bit(4);
 	};
 
 	cpu.rti = function() {
@@ -365,10 +499,9 @@
 	};
 
 	cpu.pla = function() {
-		var value = this.pullFromStack();
-		this.a = value;
-		this.testAndSetZero(value);
-		this.testAndSetNegative(value);
+		this.a = this.pullFromStack();
+		this.testAndSetZero(this.a);
+		this.testAndSetNegative(this.a);
 	};
 
 	cpu.branch = function(predicate) {
@@ -381,6 +514,17 @@
 		}
 	};
 
+	cpu.setBranchCycleCount = function(a) {
+		// One more cycle if the branch goes to a new page
+		if (highPart(this.pc - 1) != highPart(a))
+			this.cycleCount = 4;
+		else
+			this.cycleCount = 3;
+
+		// FIXME: nestest.log says otherwise
+		this.cycleCount = 3;
+	};
+
 	cpu.pushToStack = function(value) {
 		this.memory.write(0x100 + this.sp, value);
 		this.sp--;
@@ -391,138 +535,10 @@
 		return this.memory.read(0x100 + this.sp);
 	}
 
-	cpu.setBranchCycleCount = function(a) {
-		// One more cycle if the branch goes to a new page
-		if (((this.pc - 1) & 0xff00) != (a & 0xff00))
-			this.cycleCount = 4;
-		else
-			this.cycleCount = 3;
-
-		// FIXME: nestest.log says otherwise
-		this.cycleCount = 3;
-	};
-
-	cpu.immediateAddress = function() {
-		return this.pc++;
-	};
-
-	cpu.absoluteAddress = function() {
-		var high = this.memory.read(this.pc + 1);
-		var low = this.memory.read(this.pc);
-		this.pc += 2;
-		return (high << 8) | low;
-	};
-
-	cpu.absoluteXAddress = function() {
-		//FIXME: Account for additional cycle if crossing page
-
-		var high = this.memory.read(this.pc + 1);
-		var low = this.memory.read(this.pc);
-		this.pc += 2;
-
-		var a = (high << 8) | low;
-		a = (a + this.x) & 0xffff;
-
-		if ((high << 8) != (a & 0xff00))
-			this.cycleCount++;
-
-		return a;
-	};
-
-	cpu.absoluteYAddress = function() {
-		//FIXME: Account for additional cycle if crossing page
-
-		var high = this.memory.read(this.pc + 1);
-		var low = this.memory.read(this.pc);
-		this.pc += 2;
-
-		var a = (high << 8) | low;
-		a = (a + this.y) & 0xffff;
-
-		if ((high << 8) != (a & 0xff00))
-			this.cycleCount++;
-
-		return a;
-	};
-
-	cpu.indirectAddress = function() {
-		var high = this.memory.read(this.pc + 1);
-		var low = this.memory.read(this.pc);
-		this.pc += 2;
-
-		var a = (high << 8) | low;
-
-		// The original 6502 does not cross page boundary when fetching
-		// the new address.
-		var a1 = (high << 8) | ((low + 1) & 0xff);
-
-		high = this.memory.read(a1);
-		low = this.memory.read(a);
-
-		a = (high << 8) | low;
-
-		return a;
-	};
-
-	cpu.indirectXAddress = function() {
-		var a = this.memory.read(this.pc++);
-		a = (a + this.x) & 0xff;
-
-		var high = this.memory.read((a + 1) & 0xff);
-		var low = this.memory.read(a);
-
-		return (high << 8) | low;
-	};
-
-	cpu.indirectYAddress = function() {
-		//FIXME: Account for additional cycle if crossing page
-
-		var aInd = this.memory.read(this.pc++);
-
-		var high = this.memory.read((aInd + 1) & 0xff);
-		var low = this.memory.read(aInd);
-
-		var a = (high << 8) | low;
-
-		a = (a + this.y) & 0xffff;
-
-		if ((high << 8) != (a & 0xff00))
-			this.cycleCount++;
-
-		return a;
-	};
-
-	cpu.zeroPageAddress = function() {
-		return this.memory.read(this.pc++);
-	};
-
-	cpu.zeroPageXAddress = function() {
-		var a = (this.memory.read(this.pc) + this.x) & 0xff;
-		this.pc++;
-		return a;
-	};
-
-	cpu.zeroPageYAddress = function() {
-		var a = (this.memory.read(this.pc) + this.y) & 0xff;
-		this.pc++;
-		return a;
-	};
-
-	cpu.relativeAddress = function() {
-		var a = this.memory.read(this.pc);
-		if (a < 0x80)
-			a = a + this.pc;
-		else
-			a = a + (this.pc - 0x100);
-
-		++a;
-
-		return a;
-	};
-
 	cpu.bit = function(location) {
 		var value = this.memory.read(location);
 		var result = this.a & value;
+
 		this.testAndSetZero(result);
 		this.testAndSetNegative(value);
 		this.testAndSetOverflow(value);
@@ -553,7 +569,7 @@
 			this.cycleCount = 3;
 			// PHP sets bits 4 and 5 along P
 			// See http://wiki.nesdev.com/w/index.php/CPU_status_flag_behavior
-			this.pushToStack(this.p | 0x30);
+			this.pushToStack(this.p | bit(4) | bit(5));
 		},
 
 		// PLA
@@ -1406,6 +1422,40 @@
 		},
 	};
 
+	// Low-level utils
+
+	function bit(n) {
+		return 1 << n;
+	}
+
+	function toHex(value) {
+		return value.toString(16);
+	}
+
+	function toByte(value) {
+		return value & 0xff;
+	}
+
+	function toWord(value) {
+		return value & 0xffff;
+	}
+
+	function lowPart(word) {
+		return word & 0x00ff;
+	}
+
+	function highPart(word) {
+		return word & 0xff00;
+	}
+
+	function toLow(byte) {
+		return byte >> 8;
+	}
+
+	function toHigh(byte) {
+		return byte << 8;
+	}
+
 	function addIntType(obj, prop, intType) {
 		var _prop = '_' + prop;
 
@@ -1422,8 +1472,6 @@
 		});
 	}
 
-	// Low-level utils
-
 	function addUint8(obj, prop) {
 		addIntType(obj, prop, Uint8Array);
 	};
@@ -1433,29 +1481,26 @@
 
 		Object.defineProperty(obj, proph, {
 			set: function(value) {
-				this[prop] &= 0x00ff;
-				this[prop] |= value << 8;
+				this[prop] = lowPart(this[prop]);
+				this[prop] |= toHigh(value);
 			},
 			get: function() {
-				return this[prop] >> 8;
+				return toLow(this[prop]);
 			}
 		});
 
 		Object.defineProperty(obj, propl, {
 			set: function(value) {
-				this[prop] &= 0xff00;
-				this[prop] |= value & 0xff;
+				this[prop] = highPart(this[prop]);
+				this[prop] |= lowPart(value);
 			},
 			get: function() {
-				return this[prop] & 0xff;
+				return lowPart(this[prop]);
 			}
 		});
 	};
 
 	function addFlag(obj, name, bit) {
-		var bit = 1 << bit;
-		var notBit = 0xff ^ bit;
-
 		obj[name] = {};
 
 		obj[name].get = function() {
@@ -1467,7 +1512,7 @@
 		};
 
 		obj[name].clear = function() {
-			obj.p = obj.p & notBit;
+			obj.p = (obj.p | bit) - bit;
 		};
 	};
 
