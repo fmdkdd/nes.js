@@ -2,38 +2,40 @@
 
 	"use strict";
 
-	function testCpu(nesRom, logTrace) {
-		var cpu = require('./cpu').cpu;
-		var ppu = require('./ppu').ppu;
+	var utils = require('./utils');
+	var toHex = utils.toHex;
 
-		cpu.init();
+	function testCpu(nesRom, logTrace) {
+		var cpu = require('./cpu').makeCpu();
+
+		cpu.memory = require('./memory').memory;
 		cpu.memory.loadROM(nesRom);
 
+		// Specific power-up state
+		cpu.reset = function() {
+			this.a = 0;
+			this.x = 0;
+			this.y = 0;
+			this.p = 0x24;
+			this.sp = 0xfd;
+
+			this.pc = 0xc000;
+		};
+
 		cpu.reset();
-		ppu.init();
 
-		// Different power-up state
-		cpu.pc = 0xc000;
-		cpu.p = 0x24;
+		// At line 5003 begins extra 6502 opcodes
+		var lines = 0;
+		var sentinel = 5003;
 
-		try {
-			while (true) {
-				logTrace.checkState(cpu, ppu);
+		while (lines < sentinel) {
+			logTrace.checkState(cpu);
 
-				var cycles = cpu.step();
-
-				// 3 PPU cycles for each CPU cycle
-				for (var i = 0; i < 3 * cycles; ++i) {
-					ppu.step();
-				}
-
-				logTrace.step();
-			}
-		} catch (ex) {
-			console.error(ex);
+			cpu.step();
+			lines = logTrace.step();
 		}
 
-		console.info(logTrace.passed + '/' + logTrace.total, 'lines sucessfully emulated');
+		console.info('All lines sucessfully emulated');
 
 	}
 
@@ -43,14 +45,9 @@
 		var lines = logText.split('\n');
 		var linesIdx = 0;
 
-		logTrace.passed = 0;
-		logTrace.total = 0;
-
-		logTrace.checkState = function(cpu, ppu) {
+		logTrace.checkState = function(cpu) {
 			var line = lines[linesIdx];
 			var state = parseLine(line);
-
-			console.log(line);
 
 			[
 				[state.programCounter, cpu.pc, 'Program Counter'],
@@ -59,23 +56,20 @@
 				[state.y, cpu.y, 'register Y'],
 				[state.p, cpu.p, 'status P'],
 				[state.sp, cpu.sp, 'Stack Pointer'],
-				[state.cyc, ppu.cycle, 'Cycles'],
-				[state.sl, ppu.scanline, 'Scanline'],
 			]
 				.forEach(function(args) {
 					try {
-						var result = assertEquals.apply(null, args);
-						if (result)
-							logTrace.passed++;
+						assertEquals.apply(null, args);
 					} catch (ex) {
 						console.error(ex);
+						console.error('after line:', lines[linesIdx-1]);
+						throw "Test failed";
 					}
-					logTrace.total++;
 				});
 		};
 
 		logTrace.step = function() {
-			linesIdx++;
+			return ++linesIdx;
 		};
 
 		function parseLine(line) {
@@ -99,16 +93,14 @@
 	function assert(value, errorMessage) {
 		if (!value)
 			throw new Error(errorMessage);
-		else
-			return true;
 	}
 
 	function assertEquals(expected, actual, field) {
 		return assert(expected === actual, 'Failed assertion on ' + field
 						  + ': expected '
-						  + expected + ' ($' + expected.toString(16) + ')'
+						  + expected + ' ($' + toHex(expected) + ')'
 						  + ' got '
-						  + actual + ' ($' + actual.toString(16) + ')'
+						  + actual + ' ($' + toHex(actual) + ')'
 						 );
 	}
 

@@ -2,62 +2,69 @@
 
 	"use strict";
 
-	var cpu = {};
+	var utils = require('./utils');
+	var toHex = utils.toHex;
+	var bit = utils.bit;
+	var lowPart = utils.lowPart;
+	var highPart = utils.highPart;
+	var toLow = utils.toLow;
+	var toHigh = utils.toHigh;
+	var toByte = utils.toByte;
+	var toWord = utils.toWord;
 
-	// 6502 registers
+	var cpuProto = {};
 
-	// PC: Program counter (16-bit)
-	addUint16(cpu, 'pc', 'pch', 'pcl');
+	function makeCpu() {
+		var cpu = Object.create(cpuProto);
 
-	// S: Stack pointer
-	addUint8(cpu, 'sp');
+		// 6502 registers
 
-	// P: Processor status
-	addUint8(cpu, 'p');
+		// PC: Program counter (16-bit)
+		addUint16(cpu, 'pc', 'pch', 'pcl');
 
-	// A: Accumulator
-	addUint8(cpu, 'a');
+		// S: Stack pointer
+		addUint8(cpu, 'sp');
 
-	// X: index register X
-	addUint8(cpu, 'x');
+		// P: Processor status
+		addUint8(cpu, 'p');
 
-	// Y: index register Y
-	addUint8(cpu, 'y');
+		// A: Accumulator
+		addUint8(cpu, 'a');
 
-	// Keep track of how many cycles the current opcode eats,
-	// for synchronizing with APU and PPU
-	cpu.cycleCount = 0;
+		// X: index register X
+		addUint8(cpu, 'x');
 
-	// CPU Status flag P
-	//
-	// 7654 3210
-	// ||   ||||
-	// ||   |||+- C: 1 if last addition or shift resulted in a carry, or if
-	// ||   |||   last subtraction resulted in no borrow
-	// ||   ||+-- Z: 1 if last operation resulted in a 0 value
-	// ||   |+--- I: Interrupt priority level
-	// ||   |     (0: /IRQ and /NMI get through; 1: only /NMI gets through)
-	// ||   +---- D: 1 to make ADC and SBC use binary-coded decimal arithmetic
-	// ||         (ignored on second-source 6502 like that in the NES)
-	// |+-------- V: 1 if last ADC or SBC resulted in signed overflow,
-	// |          or D6 from last BIT
-	// +--------- N: Set to bit 7 of the last operation
+		// Y: index register Y
+		addUint8(cpu, 'y');
 
-	addFlag(cpu, 'carry', bit(0));
-	addFlag(cpu, 'zero', bit(1));
-	addFlag(cpu, 'irqDisable', bit(2));
-	addFlag(cpu, 'decimalMode', bit(3));
-	addFlag(cpu, 'overflow', bit(6));
-	addFlag(cpu, 'negative', bit(7));
+		// CPU Status flag P
+		//
+		// 7654 3210
+		// ||   ||||
+		// ||   |||+- C: 1 if last addition or shift resulted in a carry, or if
+		// ||   |||   last subtraction resulted in no borrow
+		// ||   ||+-- Z: 1 if last operation resulted in a 0 value
+		// ||   |+--- I: Interrupt priority level
+		// ||   |     (0: /IRQ and /NMI get through; 1: only /NMI gets through)
+		// ||   +---- D: 1 to make ADC and SBC use binary-coded decimal arithmetic
+		// ||         (ignored on second-source 6502 like that in the NES)
+		// |+-------- V: 1 if last ADC or SBC resulted in signed overflow,
+		// |          or D6 from last BIT
+		// +--------- N: Set to bit 7 of the last operation
+
+		addFlag(cpu, 'carry', bit(0));
+		addFlag(cpu, 'zero', bit(1));
+		addFlag(cpu, 'irqDisable', bit(2));
+		addFlag(cpu, 'decimalMode', bit(3));
+		addFlag(cpu, 'overflow', bit(6));
+		addFlag(cpu, 'negative', bit(7));
+
+		return cpu;
+	}
 
 	// Main functions
 
-	cpu.init = function() {
-		this.memory = require('./memory').memory;
-		this.memory.init();
-	};
-
-	cpu.reset = function() {
+	cpuProto.reset = function() {
 		this.a = 0;
 		this.x = 0;
 		this.y = 0;
@@ -69,18 +76,16 @@
 		this.pcl = this.memory.read(0xfffc);
 	};
 
-	cpu.step = function() {
+	cpuProto.step = function() {
+		// Keep track of how many cycles the current opcode eats, for
+		// synchronizing with APU and PPU
 		this.cycleCount = 0;
+
 		var opcode = this.memory.read(this.pc);
 		++this.pc;
 
-		if (this.opcodes.extra[opcode]) {
-			this.pc += this.opcodes.extra[opcode];
-			console.log("Skipping extra opcode", toHex(opcode));
-		}
-
-		else if (this.opcodes[opcode] == null) {
-			console.log("Unknown opcode " + toHex(opcode));
+		if (this.opcodes[opcode] == null) {
+			throw new Error("Unknown opcode " + toHex(opcode));
 		}
 
 		else {
@@ -90,64 +95,62 @@
 		return this.cycleCount;
 	};
 
-
+	// Flags utils
 
 	function sameSign(a, b) {
 		return !((a ^ b) & bit(7));
 	}
 
-	// Flags utils
-
-	cpu.testAndSetNegative = function(val) {
+	cpuProto.testAndSetNegative = function(val) {
 		if (val & bit(7))
 			this.negative.set();
 		else
 			this.negative.clear();
 	};
 
-	cpu.testAndSetZero = function(val) {
+	cpuProto.testAndSetZero = function(val) {
 		if (val == 0)
 			this.zero.set();
 		else
 			this.zero.clear();
 	};
 
-	cpu.testAndSetOverflow = function(result) {
+	cpuProto.testAndSetOverflow = function(result) {
 		if (result & bit(6))
 			this.overflow.set();
 		else
 			this.overflow.clear();
 	};
 
-	cpu.testAndSetOverflowAddition = function(a, b, r) {
+	cpuProto.testAndSetOverflowAddition = function(a, b, r) {
 		if (sameSign(a, b) && !sameSign(a, r))
 			this.overflow.set();
 		else
 			this.overflow.clear();
 	};
 
-	cpu.testAndSetOverflowSubstraction = function(a, b, r) {
+	cpuProto.testAndSetOverflowSubstraction = function(a, b, r) {
 		if (!sameSign(a, b) && !(sameSign(a, r)))
 			this.overflow.set();
 		else
 			this.overflow.clear();
 	};
 
-	cpu.testAndSetCarry = function(result) {
+	cpuProto.testAndSetCarry = function(result) {
 		if (result > 0)
 			this.carry.set();
 		else
 			this.carry.clear();
 	};
 
-	cpu.testAndSetCarryAddition = function(result) {
+	cpuProto.testAndSetCarryAddition = function(result) {
 		if (result > 0xff)
 			this.carry.set();
 		else
 			this.carry.clear();
 	};
 
-	cpu.testAndSetCarrySubstraction = function(result) {
+	cpuProto.testAndSetCarrySubstraction = function(result) {
 		if (result >= 0)
 			this.carry.set();
 		else
@@ -156,13 +159,13 @@
 
 	// Addressing mode utils
 
-	cpu.immediateAddress = function() {
+	cpuProto.immediateAddress = function() {
 		var address = this.pc;
 		this.pc++;
 		return address;
 	};
 
-	cpu.absoluteAddress = function(offset) {
+	cpuProto.absoluteAddress = function(offset) {
 		var offset = offset || 0;
 
 		var low = this.memory.read(this.pc);
@@ -179,15 +182,15 @@
 		return address;
 	};
 
-	cpu.absoluteXAddress = function() {
+	cpuProto.absoluteXAddress = function() {
 		return this.absoluteAddress(this.x);
 	};
 
-	cpu.absoluteYAddress = function() {
+	cpuProto.absoluteYAddress = function() {
 		return this.absoluteAddress(this.y);
 	};
 
-	cpu.indirectAddress = function() {
+	cpuProto.indirectAddress = function() {
 		var low = this.memory.read(this.pc);
 		var high = toHigh(this.memory.read(this.pc + 1));
 		this.pc += 2;
@@ -206,7 +209,7 @@
 		return finalAddress;
 	};
 
-	cpu.indirectXAddress = function() {
+	cpuProto.indirectXAddress = function() {
 		var indirectAddress = this.memory.read(this.pc++);
 		indirectAddress = toByte(indirectAddress + this.x);
 
@@ -218,7 +221,7 @@
 		return finalAddress;
 	};
 
-	cpu.indirectYAddress = function() {
+	cpuProto.indirectYAddress = function() {
 		var indirectAddress = this.memory.read(this.pc++);
 
 		var low = this.memory.read(indirectAddress);
@@ -232,22 +235,22 @@
 		return finalAddress;
 	};
 
-	cpu.zeroPageAddress = function(offset) {
+	cpuProto.zeroPageAddress = function(offset) {
 		var offset = offset || 0;
 		var address = toByte(this.memory.read(this.pc) + offset);
 		this.pc++;
 		return address;
 	};
 
-	cpu.zeroPageXAddress = function() {
+	cpuProto.zeroPageXAddress = function() {
 		return this.zeroPageAddress(this.x);
 	};
 
-	cpu.zeroPageYAddress = function() {
+	cpuProto.zeroPageYAddress = function() {
 		return this.zeroPageAddress(this.y);
 	};
 
-	cpu.relativeAddress = function() {
+	cpuProto.relativeAddress = function() {
 		var address = this.memory.read(this.pc);
 		if (address < 0x80)
 			address = this.pc + address;
@@ -261,7 +264,7 @@
 
 	// Other instructions utils
 
-	cpu.and = function(location) {
+	cpuProto.and = function(location) {
 		var value = this.memory.read(location);
 
 		this.a &= value;
@@ -270,7 +273,7 @@
 		this.testAndSetNegative(this.a);
 	};
 
-	cpu.or = function(location) {
+	cpuProto.or = function(location) {
 		var value = this.memory.read(location);
 
 		this.a |= value;
@@ -279,7 +282,7 @@
 		this.testAndSetNegative(this.a);
 	};
 
-	cpu.eor = function(location) {
+	cpuProto.eor = function(location) {
 		var value = this.memory.read(location);
 
 		this.a ^= value;
@@ -288,7 +291,7 @@
 		this.testAndSetNegative(this.a);
 	};
 
-	cpu.cmp = function(location, register) {
+	cpuProto.cmp = function(location, register) {
 		var value = this.memory.read(location);
 
 		var result = this[register] - value;
@@ -298,7 +301,7 @@
 		this.testAndSetNegative(result);
 	};
 
-	cpu.transfer = function(from, to) {
+	cpuProto.transfer = function(from, to) {
 		this[to] = this[from];
 
 		if (to != 'sp') {
@@ -307,14 +310,14 @@
 		}
 	};
 
-	cpu.inc = function(register) {
+	cpuProto.inc = function(register) {
 		this[register]++;
 
 		this.testAndSetZero(this[register]);
 		this.testAndSetNegative(this[register]);
 	};
 
-	cpu.incm = function(location) {
+	cpuProto.incm = function(location) {
 		var result = this.memory.read(location);
 
 		result = toByte(result + 1);
@@ -325,14 +328,14 @@
 		this.memory.write(location, result);
 	};
 
-	cpu.dec = function(register) {
+	cpuProto.dec = function(register) {
 		this[register]--;
 
 		this.testAndSetZero(this[register]);
 		this.testAndSetNegative(this[register]);
 	};
 
-	cpu.decm = function(location) {
+	cpuProto.decm = function(location) {
 		var result = this.memory.read(location);
 
 		result = toByte(result - 1);
@@ -343,7 +346,7 @@
 		this.memory.write(location, result);
 	};
 
-	cpu.add = function(location) {
+	cpuProto.add = function(location) {
 		var value = this.memory.read(location);
 
 		var previous = this.a;
@@ -359,7 +362,7 @@
 		this.testAndSetOverflowAddition(previous, value, this.a);
 	};
 
-	cpu.sub = function(location) {
+	cpuProto.sub = function(location) {
 		var value = this.memory.read(location);
 
 		var previous = this.a;
@@ -375,7 +378,7 @@
 		this.testAndSetOverflowSubstraction(previous, value, this.a);
 	};
 
-	cpu.asla = function() {
+	cpuProto.asla = function() {
 		var b = this.a & bit(7);
 		this.a <<= 1;
 
@@ -384,7 +387,7 @@
 		this.testAndSetNegative(this.a);
 	};
 
-	cpu.aslm = function(location) {
+	cpuProto.aslm = function(location) {
 		var result = this.memory.read(location);
 
 		var b = result & bit(7);
@@ -397,7 +400,7 @@
 		this.memory.write(location, result);
 	};
 
-	cpu.lsra = function() {
+	cpuProto.lsra = function() {
 		var b = this.a & bit(0);
 		this.a >>= 1;
 
@@ -406,7 +409,7 @@
 		this.testAndSetNegative(this.a);
 	};
 
-	cpu.lsrm = function(location) {
+	cpuProto.lsrm = function(location) {
 		var result = this.memory.read(location);
 
 		var b = result & bit(0);
@@ -419,7 +422,7 @@
 		this.memory.write(location, result);
 	};
 
-	cpu.rola = function() {
+	cpuProto.rola = function() {
 		var b = this.a & bit(7);
 		this.a <<= 1;
 		this.a |= this.carry.get();
@@ -429,7 +432,7 @@
 		this.testAndSetNegative(this.a);
 	};
 
-	cpu.rolm = function(location) {
+	cpuProto.rolm = function(location) {
 		var result = this.memory.read(location);
 
 		var b = this.a & bit(7);
@@ -443,7 +446,7 @@
 		this.memory.write(location, result);
 	};
 
-	cpu.rora = function() {
+	cpuProto.rora = function() {
 		var b = this.a & bit(0);
 		this.a >>= 1;
 		this.a |= this.carry.get() << 7;
@@ -453,7 +456,7 @@
 		this.testAndSetNegative(this.a);
 	};
 
-	cpu.rorm = function(location) {
+	cpuProto.rorm = function(location) {
 		var result = this.memory.read(location);
 
 		var b = result & bit(0);
@@ -467,11 +470,11 @@
 		this.memory.write(location, result);
 	};
 
-	cpu.jmp = function(location) {
+	cpuProto.jmp = function(location) {
 		this.pc = location;
 	};
 
-	cpu.jsr = function(location) {
+	cpuProto.jsr = function(location) {
 		var high = toLow(this.pc - 1);
 		var low = this.pc - 1;
 
@@ -481,30 +484,30 @@
 		this.pc = location;
 	};
 
-	cpu.plp = function() {
+	cpuProto.plp = function() {
 		// Not sure why we must set bit 4 but not 5
 		this.p = (this.pullFromStack() | bit(4) | bit(5)) - bit(4);
 	};
 
-	cpu.rti = function() {
+	cpuProto.rti = function() {
 		this.plp();
 		this.pcl = this.pullFromStack();
 		this.pch = this.pullFromStack();
 	};
 
-	cpu.rts = function() {
+	cpuProto.rts = function() {
 		this.pcl = this.pullFromStack();
 		this.pch = this.pullFromStack();
 		this.pc++;
 	};
 
-	cpu.pla = function() {
+	cpuProto.pla = function() {
 		this.a = this.pullFromStack();
 		this.testAndSetZero(this.a);
 		this.testAndSetNegative(this.a);
 	};
 
-	cpu.branch = function(predicate) {
+	cpuProto.branch = function(predicate) {
 		if (predicate) {
 			var a = this.relativeAddress();
 			this.setBranchCycleCount(a);
@@ -514,7 +517,7 @@
 		}
 	};
 
-	cpu.setBranchCycleCount = function(a) {
+	cpuProto.setBranchCycleCount = function(a) {
 		// One more cycle if the branch goes to a new page
 		if (highPart(this.pc - 1) != highPart(a))
 			this.cycleCount = 4;
@@ -525,17 +528,17 @@
 		this.cycleCount = 3;
 	};
 
-	cpu.pushToStack = function(value) {
+	cpuProto.pushToStack = function(value) {
 		this.memory.write(0x100 + this.sp, value);
 		this.sp--;
 	};
 
-	cpu.pullFromStack = function() {
+	cpuProto.pullFromStack = function() {
 		this.sp++;
 		return this.memory.read(0x100 + this.sp);
 	}
 
-	cpu.bit = function(location) {
+	cpuProto.bit = function(location) {
 		var value = this.memory.read(location);
 		var result = this.a & value;
 
@@ -544,17 +547,17 @@
 		this.testAndSetOverflow(value);
 	}
 
-	cpu.load = function(location, register) {
+	cpuProto.load = function(location, register) {
 		this[register] = this.memory.read(location);
 		this.testAndSetNegative(this[register]);
 		this.testAndSetZero(this[register]);
 	};
 
-	cpu.store = function(location, register) {
+	cpuProto.store = function(location, register) {
 		this.memory.write(location, this[register]);
 	};
 
-	cpu.opcodes = {
+	cpuProto.opcodes = {
 		// ~~~~~~~~~~
 		// Stack
 
@@ -1384,77 +1387,9 @@
 		0xea: function() {
 			this.cycleCount = 2;
 		},
-
-		// Extra opcodes, with the number of bytes to skip
-		extra: {
-			// NOP
-			0x1a: 0,
-			0x3a: 0,
-			0x5a: 0,
-			0x7a: 0,
-			0xda: 0,
-			0xfa: 0,
-
-			// SKB
-			0x80: 1,
-			0x82: 1,
-			0xc2: 1,
-			0xe2: 1,
-
-			0x04: 1,
-			0x14: 1,
-			0x34: 1,
-			0x44: 1,
-			0x54: 1,
-			0x64: 1,
-			0x74: 1,
-			0xd4: 1,
-			0xf4: 1,
-
-			// SKW
-			0x0c: 2,
-			0x1c: 2,
-			0x3c: 2,
-			0x5c: 2,
-			0x7c: 2,
-			0xdc: 2,
-			0xfc: 2,
-		},
 	};
 
 	// Low-level utils
-
-	function bit(n) {
-		return 1 << n;
-	}
-
-	function toHex(value) {
-		return value.toString(16);
-	}
-
-	function toByte(value) {
-		return value & 0xff;
-	}
-
-	function toWord(value) {
-		return value & 0xffff;
-	}
-
-	function lowPart(word) {
-		return word & 0x00ff;
-	}
-
-	function highPart(word) {
-		return word & 0xff00;
-	}
-
-	function toLow(byte) {
-		return byte >> 8;
-	}
-
-	function toHigh(byte) {
-		return byte << 8;
-	}
 
 	function addIntType(obj, prop, intType) {
 		var _prop = '_' + prop;
@@ -1516,6 +1451,6 @@
 		};
 	};
 
-	global.cpu = cpu;
+	global.makeCpu = makeCpu;
 
 }(module.exports || this))
