@@ -1,5 +1,7 @@
 (function(global) {
 
+	"use strict";
+
 	var StatusSpriteOverflow = 0;
 	var StatusSprite0Hit = 1;
 	var StatusVblankStarted = 2;
@@ -7,6 +9,8 @@
 	var ppu = {};
 
 	ppu.init = function() {
+		this.memory = require('./memory').memory;
+
 		this.cycle = 0;
 		this.scanline = 241;
 		this.cycleCount = 0;
@@ -111,7 +115,7 @@
 
 	ppu.readStatus = function() {
 		this.writeLatch = true;
-		var s = memory.raw[0x2002];
+		var s = this.memory.raw[0x2002];
 
 		if (this.cycle == 1 && this.scanline == 240) {
 			s &= 0x7f;
@@ -127,7 +131,7 @@
 	}
 
 	ppu.clearStatus = function(s) {
-		var current = memory.raw[0x2002];
+		var current = this.memory.raw[0x2002];
 
 		switch (s) {
 		case StatusSpriteOverflow:
@@ -138,9 +142,9 @@
 			current &= 0x7f;
 		}
 
-		memory.write(current, 0x2002);
+		this.memory.raw[0x2002] = current;
 	}
 
 	global.ppu = ppu;
 
-}(this))
+}(module.exports || this))
